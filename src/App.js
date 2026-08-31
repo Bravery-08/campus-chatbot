@@ -37,13 +37,18 @@ export default function CampusChatbot() {
         setLoading(true);
 
         try {
-            const res = await fetch("http://localhost:5000/chat", {
+            const API_BASE = (
+                process.env.REACT_APP_API_URL || "http://localhost:5000"
+            ).replace(/\/$/, "");
+
+            const res = await fetch(`${API_BASE}/chat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: text }),
             });
 
             if (!res.ok) throw new Error("Network error");
+            setConnected(true);
 
             const data = await res.json();
             const botReply = data.response || "Sorry — no response.";
@@ -125,6 +130,7 @@ export default function CampusChatbot() {
                                     <button
                                         key={idx}
                                         onClick={() => sendMessage(prompt)}
+                                        disabled={loading}
                                         className="text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg px-3 py-2 text-left"
                                     >
                                         {prompt}

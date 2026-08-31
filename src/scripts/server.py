@@ -1,0 +1,113 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import os
+from groq import Groq
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from pinecone import Pinecone
+
+load_dotenv()
+
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+index = pc.Index(os.getenv("PINECONE_INDEX"))
+
+app = Flask(__name__)
+CORS(app)
+
+EMBEDDER = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+RERANKER = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
+
+class ResponseGenerator:
+    def __init__(self, query):
+        self.query = query
+        self.contexts = []
+
+    def retrieve_context(self, top_k=5):
+        try:
+            candidate_k = max(20, top_k * 6)
+
+            query_embedding = EMBEDDER.encode(self.query).tolist()
+
+            results = index.query(
+                vector=query_embedding,
+                top_k=candidate_k,
+                include_values=False,
+                include_metadata=True
+            )
+            candidate_texts = [m.get('metadata', {}).get('text', '') for m in results.get(
+                'matches', []) if m.get('metadata', {}).get('text')]
+
+            if not candidate_texts:
+                self.contexts = []
+                return None
+
+            pairs = [(self.query, text) for text in candidate_texts]
+            scores = RERANKER.predict(pairs)
+            scored = sorted(zip(candidate_texts, scores),
+                            key=lambda x: x[1], reverse=True)
+
+            min_score = float(os.getenv("RERANK_MIN_SCORE", 0.2))
+            filtered = [text for text, score in scored if score >= min_score]
+
+            self.contexts = (filtered[:top_k] if filtered else [
+                             t for t, _ in scored[:top_k]])
+            return None
+        except Exception as exc:
+            print(f"retrieve_context error: {exc}")
+            self.contexts = []
+            return "Sorry, I couldn't retrieve campus information right now. Please try again in a moment."
+
+    def get_response(self, temperature=0.1, max_tokens=512):
+        try:
+            sys_prompt = (
+                "You are an informative chatbot for VIT Chennai University that "
+                "answers accurately and concisely based on internal knowledge."
+            )
+
+            context_block = "\n\n".join(f"• {c}" for c in (self.contexts or []))
+            user_prompt = (
+                "Answer the question using the following background information if relevant.\n"
+                f"Background:\n{context_block}\n\n"
+                f"Question: {self.query}\n\n"
+                "Guidelines:\n"
+                "- Do not mention background or sources explicitly.\n"
+                "- If the query is not related to VIT Chennai, say you only cover VIT Chennai.\n"
+                "- If information is missing, state that it is unavailable.\n"
+                "- Be friendly and concise. No emojis."
+            )
+
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+
+            return response.choices[0].message.content.strip()
+        except Exception as exc:
+            print(f"get_response error: {exc}")
+            return "Sorry, I ran into an issue while generating a response. Please try again shortly."
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.json
+    query = data.get("query", "").strip()
+    if not query:
+        return jsonify({"response": "Please enter a question."}), 400
+    if len(query) > 500:
+        return jsonify({"response": "Please keep your question under 500 characters."}), 400
+    bot = ResponseGenerator(query)
+    context_error = bot.retrieve_context(top_k=5)
+    if context_error:
+        return jsonify({"response": context_error})
+    return jsonify({"response": bot.get_response(temperature=0.1, max_tokens=512)})
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)

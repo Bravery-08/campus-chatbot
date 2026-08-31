@@ -10,13 +10,15 @@ class Vectorize:
     def __init__(self):
         self.paragraphs = []
         self.embeddings = []
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
         return
 
     def vectorize(self, path):
         with open(path, 'r', encoding='utf-8') as f:
             self.paragraphs = [line.strip() for line in f if line.strip()]
-        model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.embeddings = model.encode(self.paragraphs)
+        if not self.paragraphs:
+            raise ValueError("No paragraphs found in file — check data.txt")
+        self.embeddings = self.model.encode(self.paragraphs)
 
     def upload_to_pinecone(self, index_name='myindex', batch_size=100):
         api_key = os.getenv("PINECONE_API_KEY")
@@ -46,5 +48,5 @@ class Vectorize:
 
 if __name__ == "__main__":
     vectorizer = Vectorize()
-    vectorizer.vectorize('data.txt')
-    vectorizer.upload_to_pinecone('sw-index')
+    vectorizer.vectorize('C:\\ReactJS\\Campusly\\src\\data.txt')
+    vectorizer.upload_to_pinecone(os.getenv("PINECONE_INDEX"))

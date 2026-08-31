@@ -21,15 +21,7 @@ skip_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico'}
 
 start_url = 'https://chennai.vit.ac.in'
 headers = {"User-Agent": "Mozilla/5.0 (compatible; VITWebCrawler/1.0)"}
-response = requests.get(start_url, verify=False, headers=headers)
-soup = BeautifulSoup(response.text, 'html.parser')
 dont_crawl = set()
-
-news_div = soup.find('div', class_='news')
-if news_div:
-    for a in news_div.find_all('a', href=True):
-        full_url = urljoin(start_url, a['href'])
-        dont_crawl.add(full_url)
 
 
 def save_content(url, soup):
@@ -75,6 +67,7 @@ def extract_text_from_pdf(pdf_path):
 
 def handle_pdf(url):
     response = requests.get(url, verify=False, headers=headers)
+    response.raise_for_status()
     temp_pdf = 'temp.pdf'
     with open(temp_pdf, 'wb') as f:
         f.write(response.content)
@@ -94,8 +87,8 @@ def crawl(url, depth):
         return
     try:
         visited.add(url)
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; VITWebCrawler/1.0)"}
         response = requests.get(url, verify=False, headers=headers)
+        response.raise_for_status()
         time.sleep(1)
         soup = BeautifulSoup(response.text, 'html.parser')
         print(f"Crawling URL: {url}")
@@ -117,16 +110,27 @@ def crawl(url, depth):
                     print(f"Failed to handle PDF {full_url}: {e}")
                 continue
             try:
-                href = link.get('href')
-                full_url = urljoin(url, href)
                 if full_url.startswith('http') and full_url not in visited and "vit" in full_url:
                     crawl(full_url, depth - 1)
             except Exception as e:
-                print(f"Failed to crawl {href}: {e}")
+                print(f"Failed to crawl {full_url}: {e}")
 
     except Exception as e:
         print(f"Failed to crawl {url}: {e}\n")
 
+def main():
+    response = requests.get(start_url, verify=False, headers=headers)
+    response.raise_for_status()
+     soup = BeautifulSoup(response.text, 'html.parser')
 
-start_url = 'https://chennai.vit.ac.in'
-crawl(start_url, 10)
+    news_div = soup.find('div', class_='news')
+    if news_div:
+        for a in news_div.find_all('a', href=True):
+            full_url = urljoin(start_url, a['href'])
+            dont_crawl.add(full_url)
+
+    crawl(start_url, 10)
+
+
+if __name__ == "__main__":
+    main()
